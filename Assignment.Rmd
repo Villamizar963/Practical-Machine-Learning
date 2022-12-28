@@ -1,0 +1,222 @@
+---
+title: "Machine Learning Final Report"
+subtitle: "Prediction Assignment Writeup"
+autor: Angel Villamizar
+date: "12/28/2022"
+output:
+  html_document:
+    keep_md: true
+    theme: cerulean
+    toc: yes
+    toc_depth: 1
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=TRUE, warning = FALSE}
+suppressMessages(library(dplyr))
+suppressMessages(library(tidyr))
+suppressMessages(library(data.table))
+suppressMessages(library(ggplot2))
+suppressMessages(library(knitr))
+suppressMessages(library(lattice))
+suppressMessages(library(caret))
+suppressMessages(library(rpart))
+suppressMessages(library(rpart.plot))
+suppressMessages(library(rattle))
+suppressMessages(library(randomForest))
+suppressMessages(library(corrplot))
+suppressMessages(library(gbm))
+
+directory=getwd()
+
+workspace=getwd()
+workspace=sprintf("%s/.RData",workspace)
+```
+
+# 1.- Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+# 2.- Data Processing
+
+## 2.1.- Data Loading
+
+The training data for this project are available here:
+
+[TRAINING](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[TEST](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+```{r echo=TRUE}
+traincsv <- read.csv("pml-training.csv")
+testcsv <- read.csv("pml-testing.csv")
+
+dim(traincsv)
+```
+
+```{r echo=TRUE}
+dim(testcsv)
+```
+
+## 2.2.- Clean data
+
+We remove NA columns. The features containing NA are the variance. Since these values do not add to prediction, they can be removed. We will use this on the training set and assign the same column features to test data set. Remove the first seven features as they are not nummeric or are related to time series.
+
+```{r echo=TRUE}
+traincsv <- traincsv[,colMeans(is.na(traincsv)) == 0]
+traincsv <- traincsv[,-c(1:7)]
+```
+
+Check for near zero variance predictors and drop them if necessary.
+```{r echo=TRUE}
+nvz <- nearZeroVar(traincsv)
+traincsv <- traincsv[,-nvz]
+dim(traincsv)
+```
+
+Select the same predictors in the test set.
+```{r echo=TRUE}
+colNames <- setdiff(names(traincsv),"classe")
+
+testcsv <- testcsv[,c(colNames,"problem_id")]
+dim(testcsv)
+```
+
+```{r echo=TRUE}
+dim(traincsv)
+```
+
+Partioning Data Set.
+
+Split the data into 70% training data and 30% test data. The "classe" variable is in the train set.
+```{r echo=TRUE}
+set.seed(1234)
+inTrain <- createDataPartition(y=traincsv$classe, p=0.7, list=F)
+
+train <- traincsv[inTrain,]
+valid <- traincsv[-inTrain,]
+
+dim(train)
+```
+
+# 3.- Model building
+
+Cross validation is done for each model with K = 3:
+
+```{r echo=TRUE}
+fitControl <- trainControl(method='cv', number = 3)
+```
+
+For this Project, three prediction methods are used.
+
+## 3.1.- Random Forest
+
+```{r eval=FALSE, include=TRUE}
+mod_rf <- train(
+  classe ~ ., 
+  data=train,
+  trControl=fitControl,
+  method='rf',
+  ntree=100
+)
+
+saveRDS(mod_rf, file='mod_rf.rds')
+```
+
+Prediction with Random Forest
+```{r echo=TRUE}
+mod_rf <- readRDS(file='mod_rf.rds')
+
+pred_rf <- predict(mod_rf, valid)
+
+cmrf <- confusionMatrix(pred_rf, factor(valid$classe))
+cmrf
+```
+
+Plot Random Forest
+```{r echo=TRUE}
+plot(mod_rf)
+```
+
+## 3.2.- Decision Tree
+
+```{r echo=TRUE}
+model_cart <- train(
+  classe ~ ., 
+  data=train,
+  trControl=fitControl,
+  method='rpart'
+)
+
+saveRDS(model_cart, file='model_cart.rds')
+```
+
+Prediction with Decision Tree
+```{r echo=TRUE}
+pred_trees <- predict(model_cart, valid)
+cmtrees <- confusionMatrix(pred_trees, factor(valid$classe))
+cmtrees
+```
+
+Plot Decision Tree
+```{r echo=TRUE}
+model_cart <- readRDS(file='model_cart.rds')
+
+fancyRpartPlot(model_cart$finalModel)
+```
+
+## 3.3.- Generalized Boosted Model (GBM)
+
+```{r eval=FALSE, include=TRUE}
+model_gbm <- train(
+  classe ~ ., 
+  data=train,
+  trControl=fitControl,
+  method='gbm'
+)
+saveRDS(model_gbm, file='model_gbm.rds')
+```
+
+Prediction with Generalized Boosted Model (GBM)
+```{r echo=TRUE}
+model_gbm <- readRDS(file='model_gbm.rds')
+
+pred_gbm <- predict(model_gbm, valid)
+
+cmgbm <- confusionMatrix(pred_gbm, factor(valid$classe))
+cmgbm
+```
+
+Plot (GBM)
+```{r echo=TRUE}
+plot(model_gbm)
+```
+
+# 4.- Results
+
+```{r echo=TRUE}
+AccuracyResults <- data.frame(
+  Model = c('Random Forest', 'Decision Tree', 'GBM'),
+  Accuracy = rbind(cmrf$overall[1], cmtrees$overall[1], cmgbm$overall[1])
+)
+print(AccuracyResults)
+```
+
+Based on an assessment of these 3 model fits and out-of-sample results, it looks like both gradient boosting and random forests outperform the Decision Tree model, with random forests being slightly more accurate. 
+
+As a last step in the project, the validation data sample (‘pml-testing.csv’) is used to predict a classe for each of the 20 observations based on the other information about these observations contained in the validation sample.
+
+```{r echo=TRUE}
+ptest <- predict(mod_rf, testcsv)
+
+ValidationPredictionResults <- data.frame(
+  problem_id=testcsv$problem_id,
+  predicted=ptest
+)
+print(ValidationPredictionResults)
+```
+
+Despite these remaining questions on missing data in the samples, the random forest model with cross-validation produces a surprisingly accurate model that is sufficient for predictive analytics.
